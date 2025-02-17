@@ -3,19 +3,28 @@ import { DocumentList } from '../components/DocumentList';
 import { FileUpload } from '../components/FileUpload';
 import { Document, UploadProgress } from '../types/document';
 import { Card } from "@/components/ui/card";
+import { useToast } from "@/hooks/use-toast";
 
 export const DocumentManagement: React.FC = () => {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress[]>([]);
+  const { toast } = useToast();
 
   const handleUpload = async (files: File[]) => {
     try {
       if (files.length > 1) {
-        alert("Please upload only one file at a time.");
+        toast({
+          title: "Upload Error",
+          description: "Please upload only one file at a time.",
+          variant: "destructive",
+        });
         return;
       }
 
       const file = files[0];
+      const formData = new FormData();
+      formData.append("file", file);
+
       const newDoc: Document = {
         id: Math.random().toString(36).substr(2, 9),
         name: file.name,
@@ -27,27 +36,62 @@ export const DocumentManagement: React.FC = () => {
 
       setDocuments(prev => [...prev, newDoc]);
 
-      // Simulate file upload with progress updates
-      for (let progress = 0; progress <= 100; progress += 10) {
-        setUploadProgress([{ fileName: file.name, progress }]);
-        await new Promise(resolve => setTimeout(resolve, 300));
-      }
+      return new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        
+        xhr.upload.addEventListener("progress", (event) => {
+          if (event.lengthComputable) {
+            const progress = Math.round((event.loaded / event.total) * 100);
+            setUploadProgress([{ fileName: file.name, progress }]);
+          }
+        });
 
-      setUploadProgress([]);
-      
-      setDocuments(prev =>
-        prev.map(doc =>
-          doc.id === newDoc.id ? { ...doc, status: 'ready' } : doc
-        )
-      );
+        xhr.addEventListener("load", () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            setUploadProgress([]);
+            setDocuments(prev =>
+              prev.map(doc =>
+                doc.id === newDoc.id ? { ...doc, status: 'ready' } : doc
+              )
+            );
+            toast({
+              title: "Upload Success",
+              description: "File has been successfully processed",
+            });
+            resolve();
+          } else {
+            handleUploadError(newDoc.id, `Server error: ${xhr.statusText}`);
+            reject(xhr.statusText);
+          }
+        });
+
+        xhr.addEventListener("error", () => {
+          handleUploadError(newDoc.id, "Network error occurred");
+          reject(new Error("Network error"));
+        });
+
+        xhr.open("POST", "http://127.0.0.1:8080/load");
+        xhr.send(formData);
+      });
+
     } catch (error) {
       console.error('Upload error:', error);
-      setDocuments(prev =>
-        prev.map(doc =>
-          doc.status === 'processing' ? { ...doc, status: 'error' } : doc
-        )
-      );
+      handleUploadError("", "Unexpected error occurred");
     }
+  };
+
+  const handleUploadError = (docId: string, message: string) => {
+    setUploadProgress([]);
+    setDocuments(prev =>
+      prev.map(doc =>
+        doc.id === docId ? { ...doc, status: 'error' } : doc
+      )
+    );
+    toast({
+      title: "Upload Failed",
+      description: message,
+      variant: "destructive",
+    });
   };
 
   const handleDelete = (id: string) => {
